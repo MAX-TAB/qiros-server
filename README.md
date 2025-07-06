@@ -71,10 +71,17 @@
 2.  复制并记下 **Client ID** 和新生成的 **Client secret**。
 3.  在 `SillyTavern\plugins\qiros-server` 文件夹内，新建一个名为 `.env` 的文件。
 4.  在 `.env` 文件中填入以下内容，并替换成你自己的 ID 和 Secret：
-    `    GITHUB_CLIENT_ID=你刚记下的Client ID
-    GITHUB_CLIENT_SECRET=你刚记下的Client secret
-   `
-    至此，后端配置完成。
+
+```
+GITHUB_CLIENT_ID=你刚记下的Client ID
+GITHUB_CLIENT_SECRET=你刚记下的Client secret
+```
+
+至此，后端配置完成。
 
 **第五步：安装前端插件**
-请参考 [Qiros 前端插件](https://github.com/MAX-TAB/st-extension-qiros) 的说明完成安装。
+
+1.  打开 SillyTavern。
+2.  在插件安装界面中，输入以下 URL 进行安装：
+    `https://github.com/MAX-TAB/st-extension-qiros`
+3.  正常完成安装即可。
