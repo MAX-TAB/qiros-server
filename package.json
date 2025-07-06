@@ -1,0 +1,26 @@
+{
+  "name": "qiros-server",
+  "version": "1.0.0",
+  "description": "qiros插件服务端",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "webpack"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node-fetch": "^2.6.12",
+    "ts-loader": "^9.5.2",
+    "typescript": "^5.8.3",
+    "webpack": "^5.99.9",
+    "webpack-cli": "^6.0.1"
+  },
+  "dependencies": {
+    "@octokit/rest": "^22.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.0.1",
+    "express": "^5.1.0",
+    "form-data": "^4.0.3",
+    "node-fetch": "^3.3.2"
+  }
+}
