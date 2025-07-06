@@ -72,7 +72,7 @@
 3.  在 `SillyTavern\plugins\qiros-server` 文件夹内，新建一个名为 `.env` 的文件。
 4.  在 `.env` 文件中填入以下内容，并替换成你自己的 ID 和 Secret：
 
-```
+```env
 GITHUB_CLIENT_ID=你刚记下的Client ID
 GITHUB_CLIENT_SECRET=你刚记下的Client secret
 ```
