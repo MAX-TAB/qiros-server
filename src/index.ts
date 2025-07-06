@@ -21,6 +21,7 @@ import {
   getCommitDiff,
   forkRepo,
   createPullRequest,
+  commitMultipleFiles,
 } from "./git-handler";
 import { Octokit } from "@octokit/rest";
 
@@ -296,16 +297,10 @@ async function init(router: Router) {
     }
 
     try {
+      // 1. 准备 character.json 的内容
       const jsonContent = JSON.stringify(characterData, null, 2);
-      await syncFile(
-        loggedInUser.accessToken,
-        repoUrl,
-        branch,
-        "character.json",
-        jsonContent,
-        commitMessage
-      );
 
+      // 2. 从 SillyTavern 导出 card.png
       const exportResponse = await fetch(
         "http://127.0.0.1:8000/api/characters/export",
         {
@@ -332,18 +327,23 @@ async function init(router: Router) {
       const arrayBuffer = await exportResponse.arrayBuffer();
       const pngBuffer = Buffer.from(arrayBuffer);
 
-      const pngSyncResult = await syncFile(
+      // 3. 将两个文件合并到一个原子提交中
+      const filesToCommit = [
+        { path: "character.json", content: jsonContent },
+        { path: "card.png", content: pngBuffer },
+      ];
+
+      const newCommit = await commitMultipleFiles(
         loggedInUser.accessToken,
         repoUrl,
         branch,
-        "card.png",
-        pngBuffer,
-        `[Auto] 更新角色卡： ${characterData.data.name || "character"}`
+        filesToCommit,
+        commitMessage
       );
 
       res.status(200).send({
-        message: "同步成功！已推送 character.json 和 card.png。",
-        commitSha: pngSyncResult.commit.sha,
+        message: "同步成功！已将 character.json 和 card.png 合并提交。",
+        commitSha: newCommit.sha,
       });
     } catch (error: any) {
       console.error(`为仓库 ${repoUrl} 同步文件失败:`, error);
@@ -584,13 +584,16 @@ async function init(router: Router) {
       });
     }
     try {
-      await revertToVersion(
+      const revertedData = await revertToVersion(
         loggedInUser.accessToken,
         repoUrl,
         branch,
         targetCommitSha
       );
-      res.status(200).send({ message: "文件回滚成功！" });
+      res.status(200).send({
+        message: "文件回滚成功！现在将为您加载新版本。",
+        data: revertedData,
+      });
     } catch (error: any) {
       console.error(`将文件回滚到 ${targetCommitSha} 失败:`, error);
       res.status(500).send({

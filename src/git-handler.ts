@@ -277,6 +277,95 @@ export async function syncFile(
 
 /**
  * =================================================================
+ * 提交多个文件 (commitMultipleFiles)
+ * =================================================================
+ * @description
+ * 使用底层的Git Data API，将多个文件的更改合并到一个原子提交中。
+ *
+ * @param {string} token - 用户的GitHub OAuth访问令牌。
+ * @param {string} repoUrl - 目标仓库的URL。
+ * @param {string} branch - 要提交到的分支。
+ * @param {Array<{path: string, content: string | Buffer}>} files - 文件对象数组。
+ * @param {string} commitMessage - 本次提交的信息。
+ * @returns {Promise<object>} - 返回新创建的提交对象。
+ */
+export async function commitMultipleFiles(
+  token: string,
+  repoUrl: string,
+  branch: string,
+  files: Array<{ path: string; content: string | Buffer }>,
+  commitMessage: string
+) {
+  const octokit = new Octokit({ auth: token });
+  const { owner, repo } = parseRepoUrl(repoUrl);
+
+  // 1. 获取当前分支的最新 commit 和其 tree
+  const { data: refData } = await octokit.git.getRef({
+    owner,
+    repo,
+    ref: `heads/${branch}`,
+  });
+  const latestCommitSha = refData.object.sha;
+  const { data: latestCommit } = await octokit.git.getCommit({
+    owner,
+    repo,
+    commit_sha: latestCommitSha,
+  });
+  const baseTreeSha = latestCommit.tree.sha;
+
+  // 2. 为每个文件创建 blobs
+  const blobPromises = files.map(async (file) => {
+    const content = Buffer.isBuffer(file.content)
+      ? file.content.toString("base64")
+      : file.content;
+    const encoding = Buffer.isBuffer(file.content) ? "base64" : "utf-8";
+
+    const blob = await octokit.git.createBlob({
+      owner,
+      repo,
+      content,
+      encoding,
+    });
+    return {
+      path: file.path,
+      mode: "100644" as const,
+      type: "blob" as const,
+      sha: blob.data.sha,
+    };
+  });
+
+  const treeItems = await Promise.all(blobPromises);
+
+  // 3. 基于最新提交的 tree 创建一个新的 tree
+  const { data: newTree } = await octokit.git.createTree({
+    owner,
+    repo,
+    base_tree: baseTreeSha,
+    tree: treeItems,
+  });
+
+  // 4. 创建一个新的 commit
+  const { data: newCommit } = await octokit.git.createCommit({
+    owner,
+    repo,
+    message: commitMessage,
+    tree: newTree.sha,
+    parents: [latestCommitSha],
+  });
+
+  // 5. 更新分支引用以指向新 commit
+  await octokit.git.updateRef({
+    owner,
+    repo,
+    ref: `heads/${branch}`,
+    sha: newCommit.sha,
+  });
+
+  return newCommit;
+}
+
+/**
+ * =================================================================
  * 获取提交历史 (getHistory)
  * =================================================================
  * @description
@@ -458,46 +547,110 @@ export async function revertToVersion(
   repoUrl: string,
   branch: string,
   targetCommitSha: string
-) {
+): Promise<{ characterJsonContent: string; cardPngContent: string | null }> {
   const octokit = new Octokit({ auth: token });
   const { owner, repo } = parseRepoUrl(repoUrl);
 
-  const fileData = await getFileContent(
+  // 1. 获取目标提交中两个文件的内容
+  const jsonFileData = await getFileContent(
     token,
     repoUrl,
     targetCommitSha,
     "character.json"
   );
-  if (!fileData) {
+  if (!jsonFileData) {
     throw new Error(
       `无法在提交 ${targetCommitSha} 中获取 character.json 的内容`
     );
   }
-  const { content: oldContent } = fileData;
+  const characterJsonContent = Buffer.from(
+    jsonFileData.content,
+    "base64"
+  ).toString("utf-8");
 
-  const currentFileData = await getFileContent(
+  const pngFileData = await getFileContent(
     token,
     repoUrl,
-    branch,
-    "character.json"
+    targetCommitSha,
+    "card.png"
   );
-  if (!currentFileData) {
-    throw new Error(`无法在分支 ${branch} 上获取 character.json 的当前内容`);
+  const cardPngContent = pngFileData ? pngFileData.content : null; // Base64
+
+  // 2. 获取当前分支的最新提交和其 tree
+  const { data: refData } = await octokit.git.getRef({
+    owner,
+    repo,
+    ref: `heads/${branch}`,
+  });
+  const latestCommitSha = refData.object.sha;
+  const { data: latestCommit } = await octokit.git.getCommit({
+    owner,
+    repo,
+    commit_sha: latestCommitSha,
+  });
+  const baseTreeSha = latestCommit.tree.sha;
+
+  // 3. 为要更新的文件创建 blobs
+  const blobs = [];
+  const jsonBlob = await octokit.git.createBlob({
+    owner,
+    repo,
+    content: characterJsonContent,
+    encoding: "utf-8",
+  });
+  blobs.push({
+    path: "character.json",
+    mode: "100644" as const,
+    type: "blob" as const,
+    sha: jsonBlob.data.sha,
+  });
+
+  if (cardPngContent) {
+    const pngBlob = await octokit.git.createBlob({
+      owner,
+      repo,
+      content: cardPngContent,
+      encoding: "base64",
+    });
+    blobs.push({
+      path: "card.png",
+      mode: "100644" as const,
+      type: "blob" as const,
+      sha: pngBlob.data.sha,
+    });
   }
 
-  const commitMessage = `回滚 character.json 到版本 ${targetCommitSha.substring(
-    0,
-    7
-  )}`;
-  await updateFile(
-    token,
-    repoUrl,
-    branch,
-    "character.json",
-    oldContent,
-    commitMessage,
-    currentFileData.sha
-  );
+  // 4. 基于最新提交的 tree 创建一个新的 tree
+  const { data: newTree } = await octokit.git.createTree({
+    owner,
+    repo,
+    base_tree: baseTreeSha,
+    tree: blobs,
+  });
+
+  // 5. 创建一个新的 commit
+  const commitMessage = `回滚到版本 ${targetCommitSha.substring(0, 7)}`;
+  const { data: newCommit } = await octokit.git.createCommit({
+    owner,
+    repo,
+    message: commitMessage,
+    tree: newTree.sha,
+    parents: [latestCommitSha],
+  });
+
+  // 6. 更新分支引用以指向新 commit
+  await octokit.git.updateRef({
+    owner,
+    repo,
+    ref: `heads/${branch}`,
+    sha: newCommit.sha,
+  });
+
+  // 7. 返回文件内容给前端
+  return {
+    characterJsonContent,
+    cardPngContent,
+  };
 }
 
 /**
