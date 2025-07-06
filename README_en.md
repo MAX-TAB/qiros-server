@@ -33,11 +33,25 @@ The installation process is somewhat complex and takes about ten minutes.
 
 **Step 2: Install the Qiros Server Backend**
 
-1.  Download `qiros-server`.
-2.  Move the extracted `qiros-server` folder to the `SillyTavern\plugins` directory.
-3.  Run the deployment script:
-    - **For Windows users**: Run `SillyTavern\plugins\qiros-server\一键部署脚本.bat`.
-    - **For mobile or other OS users**: Run `SillyTavern\plugins\qiros-server\一键部署脚本.sh`.
+We highly recommend installing via `git clone` to enable the auto-update feature for the plugin.
+
+- **Method 1 (Recommended, requires Git):**
+
+  1.  Open a terminal or command prompt.
+  2.  Navigate to your SillyTavern's `plugins` directory, e.g., `cd path/to/SillyTavern/plugins`
+  3.  Run the clone command:
+      ```bash
+      git clone https://github.com/MAX-TAB/qiros-server.git
+      ```
+
+- **Method 2 (Manual Install):**
+  1.  On the [qiros-server GitHub page](https://github.com/MAX-TAB/qiros-server), click `Code` -> `Download ZIP`.
+  2.  Move the extracted folder to your `SillyTavern\plugins` directory.
+
+After installation, proceed with the deployment script:
+
+- **For Windows users**: Run `SillyTavern\plugins\qiros-server\一键部署脚本.bat`.
+- **For mobile or other OS users**: Run `SillyTavern\plugins\qiros-server\一键部署脚本.sh`.
 
 **Step 3: Obtain GitHub OAuth Credentials**
 
@@ -57,8 +71,9 @@ The installation process is somewhat complex and takes about ten minutes.
 2.  Copy and save the **Client ID** and the newly generated **Client secret**.
 3.  Inside the `SillyTavern\plugins\qiros-server` folder, create a new file named `.env`.
 4.  Enter the following content into the `.env` file, replacing the placeholders with your own ID and Secret:
-    `   GITHUB_CLIENT_ID=Your_Client_ID_here
- GITHUB_CLIENT_SECRET=Your_Client_Secret_here`
+    `    GITHUB_CLIENT_ID=Your_Client_ID_here
+    GITHUB_CLIENT_SECRET=Your_Client_Secret_here
+   `
     The backend configuration is now complete.
 
 **Step 5: Install the Frontend Plugin**

@@ -33,11 +33,25 @@
 
 **第二步：安装 Qiros 服务器后端**
 
-1.  下载 `qiros-server`。
-2.  将解压后的 `qiros-server` 文件夹移动到 `SillyTavern\plugins` 目录下。
-3.  运行部署脚本：
-    - **Windows 用户**: 运行 `SillyTavern\plugins\qiros-server\一键部署脚本.bat`。
-    - **手机或其他系统用户**: 运行 `SillyTavern\plugins\qiros-server\一键部署脚本.sh`。
+我们强烈推荐使用 `git clone` 的方式进行安装，这能让插件在未来自动更新。
+
+- **方法一 (推荐，需要 Git):**
+
+  1.  打开终端或命令行。
+  2.  进入 SillyTavern 的 `plugins` 目录，例如: `cd path/to/SillyTavern/plugins`
+  3.  运行克隆命令:
+      ```bash
+      git clone https://github.com/MAX-TAB/qiros-server.git
+      ```
+
+- **方法二 (手动安装):**
+  1.  在 [qiros-server 的 GitHub 页面](https://github.com/MAX-TAB/qiros-server) 点击 `Code` -> `Download ZIP`。
+  2.  将解压后的文件夹移动到 `SillyTavern\plugins` 目录下。
+
+安装完成后，请继续执行后续的部署脚本步骤：
+
+- **Windows 用户**: 运行 `SillyTavern\plugins\qiros-server\一键部署脚本.bat`。
+- **手机或其他系统用户**: 运行 `SillyTavern\plugins\qiros-server\一键部署脚本.sh`。
 
 **第三步：获取 GitHub OAuth 密钥**
 
@@ -57,8 +71,9 @@
 2.  复制并记下 **Client ID** 和新生成的 **Client secret**。
 3.  在 `SillyTavern\plugins\qiros-server` 文件夹内，新建一个名为 `.env` 的文件。
 4.  在 `.env` 文件中填入以下内容，并替换成你自己的 ID 和 Secret：
-    `   GITHUB_CLIENT_ID=你刚记下的Client ID
-GITHUB_CLIENT_SECRET=你刚记下的Client secret`
+    `    GITHUB_CLIENT_ID=你刚记下的Client ID
+    GITHUB_CLIENT_SECRET=你刚记下的Client secret
+   `
     至此，后端配置完成。
 
 **第五步：安装前端插件**
