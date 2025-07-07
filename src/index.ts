@@ -341,6 +341,12 @@ async function init(router: Router) {
         "base64"
       ).toString("utf-8");
 
+      const headSha = await getBranchHeadSha(
+        loggedInUser.accessToken,
+        repoUrl as string,
+        branch as string
+      );
+
       // 2. 从SillyTavern导出当前角色卡PNG的Buffer
       const exportResponse = await fetch(
         "http://127.0.0.1:8000/api/characters/export",
@@ -395,6 +401,7 @@ async function init(router: Router) {
       res.status(200).send({
         message: "角色卡JSON数据已注入并成功更新！",
         data: result,
+        commitSha: headSha,
       });
     } catch (error: any) {
       console.error(`处理下载/注入流程失败:`, error);
@@ -620,6 +627,7 @@ async function init(router: Router) {
           targetCommitSha as string
         ).substring(0, 7)} 并更新！`,
         data: result,
+        commitSha: targetCommitSha,
       });
     } catch (error: any) {
       console.error(`从版本 ${targetCommitSha} 回滚失败:`, error);
