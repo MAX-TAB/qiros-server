@@ -21,8 +21,9 @@ import {
   getCommitDiff,
   forkRepo,
   createPullRequest,
-  commitMultipleFiles,
 } from "./git-handler";
+// @ts-ignore
+import { write } from "../../../src/character-card-parser.js";
 import { Octokit } from "@octokit/rest";
 
 /**
@@ -273,17 +274,10 @@ async function init(router: Router) {
 
   /**
    * @api {post} /sync
-   * @description "推送(Push)"功能的核心。它将本地的角色数据和新生成的角色卡图片推送到GitHub仓库。
-   *              这是一个多步骤操作：
-   *              1. 将前端发送的角色数据(`characterData`)保存为`character.json`文件，并推送到指定分支。
-   *              2. 向SillyTavern主服务发起一个内部API请求(`/api/characters/export`)，生成最新的角色卡PNG图片。
-   *                 此请求必须携带用户的Cookie和CSRF令牌以通过认证。
-   *              3. 将生成的PNG图片作为`card.png`文件，推送到同一分支。
-   *              4. 返回最后一次提交的SHA哈希值给前端。
+   * @description "推送(Push)"功能的核心。它只将本地的角色数据(`character.json`)推送到GitHub仓库。
    */
   router.post("/sync", ensureAuthenticated, (async (req, res) => {
-    const { repoUrl, branch, commitMessage, characterData, csrfToken } =
-      req.body;
+    const { repoUrl, branch, commitMessage, characterData } = req.body;
 
     if (!repoUrl || !branch || !commitMessage || !characterData) {
       return res.status(400).send({
@@ -292,61 +286,23 @@ async function init(router: Router) {
       });
     }
 
-    if (!characterData.avatar || !characterData.data) {
-      return res.status(400).send({ message: "提供了无效的角色数据。" });
-    }
-
     try {
-      // 1. 准备 character.json 的内容
       const jsonContent = JSON.stringify(characterData, null, 2);
-
-      // 2. 从 SillyTavern 导出 card.png
-      const exportResponse = await fetch(
-        "http://127.0.0.1:8000/api/characters/export",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-CSRF-Token": csrfToken,
-            Cookie: req.headers.cookie as string,
-          },
-          body: JSON.stringify({
-            format: "png",
-            avatar_url: path.basename(characterData.avatar),
-          }),
-        }
-      );
-
-      if (!exportResponse.ok) {
-        const errorText = await exportResponse.text();
-        throw new Error(
-          `从SillyTavern导出角色卡失败: ${exportResponse.status} ${errorText}`
-        );
-      }
-
-      const arrayBuffer = await exportResponse.arrayBuffer();
-      const pngBuffer = Buffer.from(arrayBuffer);
-
-      // 3. 将两个文件合并到一个原子提交中
-      const filesToCommit = [
-        { path: "character.json", content: jsonContent },
-        { path: "card.png", content: pngBuffer },
-      ];
-
-      const newCommit = await commitMultipleFiles(
+      const syncResult = await syncFile(
         loggedInUser.accessToken,
         repoUrl,
         branch,
-        filesToCommit,
+        "character.json",
+        jsonContent,
         commitMessage
       );
 
       res.status(200).send({
-        message: "同步成功！已将 character.json 和 card.png 合并提交。",
-        commitSha: newCommit.sha,
+        message: "同步成功！已将 character.json 推送到仓库。",
+        commitSha: syncResult.commit.sha,
       });
     } catch (error: any) {
-      console.error(`为仓库 ${repoUrl} 同步文件失败:`, error);
+      console.error(`为仓库 ${repoUrl} 同步 character.json 失败:`, error);
       res
         .status(500)
         .send({ message: "同步文件失败。", details: error.message });
@@ -355,11 +311,9 @@ async function init(router: Router) {
 
   /**
    * @api {get} /download_card
-   * @description "拉取(Pull)"功能的核心。它从GitHub仓库下载最新的角色卡，并导入SillyTavern以覆盖本地角色。
-   *              1. 从GitHub仓库指定分支下载`card.png`文件。
-   *              2. 使用`form-data`准备一个多部分表单。
-   *              3. 调用SillyTavern的内部导入API (`/api/characters/import`)，并使用`preserved_name`参数
-   *                 来确保覆盖的是当前角色，而不是创建新角色。此请求也必须转发用户的Cookie和CSRF令牌。
+   * @description "拉取(Pull)"功能的核心。它从GitHub仓库下载最新的`character.json`，
+   *              然后通过SillyTavern的内部API导出当前角色卡，将新的JSON数据注入后，
+   *              再通过导入API实现对本地角色的无缝更新。
    */
   router.get("/download_card", ensureAuthenticated, (async (req, res) => {
     const { repoUrl, branch, characterAvatar } = req.query;
@@ -372,20 +326,50 @@ async function init(router: Router) {
     }
 
     try {
-      const fileData = await getFileContent(
+      // 1. 从GitHub拉取目标character.json
+      const jsonFileData = await getFileContent(
         loggedInUser.accessToken,
         repoUrl as string,
         branch as string,
-        "card.png"
+        "character.json"
       );
-
-      if (!fileData || !fileData.content) {
-        throw new Error("在仓库中未找到 card.png。");
+      if (!jsonFileData || !jsonFileData.content) {
+        throw new Error("在仓库中未找到 character.json。");
       }
+      const characterJsonContent = Buffer.from(
+        jsonFileData.content,
+        "base64"
+      ).toString("utf-8");
 
-      const imageBuffer = Buffer.from(fileData.content, "base64");
+      // 2. 从SillyTavern导出当前角色卡PNG的Buffer
+      const exportResponse = await fetch(
+        "http://127.0.0.1:8000/api/characters/export",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": req.headers["x-csrf-token"] as string,
+            Cookie: req.headers.cookie as string,
+          },
+          body: JSON.stringify({
+            format: "png",
+            avatar_url: characterAvatar as string,
+          }),
+        }
+      );
+      if (!exportResponse.ok) {
+        throw new Error(
+          `从SillyTavern导出角色卡失败: ${exportResponse.status}`
+        );
+      }
+      const cardPngBuffer = await exportResponse.buffer();
+
+      // 3. 将新的JSON注入到导出的PNG Buffer中
+      const newCardBuffer = write(cardPngBuffer, characterJsonContent);
+
+      // 4. 将合成后的新卡片导入SillyTavern
       const formData = new FormData();
-      formData.append("avatar", imageBuffer, "card.png");
+      formData.append("avatar", newCardBuffer, characterAvatar as string);
       formData.append("file_type", "png");
       formData.append("preserved_name", characterAvatar as string);
 
@@ -401,23 +385,21 @@ async function init(router: Router) {
           },
         }
       );
-
       if (!importResponse.ok) {
         const errorText = await importResponse.text();
         throw new Error(
           `SillyTavern导入失败: ${importResponse.status} - ${errorText}`
         );
       }
-
       const result = await importResponse.json();
       res.status(200).send({
-        message: "角色卡下载并更新成功！",
+        message: "角色卡JSON数据已注入并成功更新！",
         data: result,
       });
     } catch (error: any) {
-      console.error(`为仓库 ${repoUrl} 下载并导入角色卡失败:`, error);
+      console.error(`处理下载/注入流程失败:`, error);
       res.status(500).send({
-        message: "从仓库下载角色卡失败。",
+        message: "角色卡更新失败。",
         details: error.message,
       });
     }
@@ -429,10 +411,6 @@ async function init(router: Router) {
    * =================================================================
    */
 
-  /**
-   * @api {get} /branches
-   * @description 获取指定仓库的所有分支列表。
-   */
   router.get("/branches", ensureAuthenticated, (async (req, res) => {
     const { repoUrl } = req.query;
     if (!repoUrl) {
@@ -452,12 +430,8 @@ async function init(router: Router) {
     }
   }) as RequestHandler);
 
-  /**
-   * @api {post} /create_branch
-   * @description 在仓库中基于一个现有分支创建一个新分支。
-   */
   router.post("/create_branch", ensureAuthenticated, (async (req, res) => {
-    const { repoUrl, newBranchName, baseBranchName } = req.body;
+    const { repoUrl, newBranchName, baseBranchName, readmeContent } = req.body;
     if (!repoUrl || !newBranchName) {
       return res.status(400).send({
         message: "仓库地址(repoUrl)和新分支名(newBranchName)是必需的。",
@@ -468,7 +442,8 @@ async function init(router: Router) {
         loggedInUser.accessToken,
         repoUrl,
         newBranchName,
-        baseBranchName
+        baseBranchName,
+        readmeContent
       );
       res.status(200).send({
         message: `分支 '${newBranchName}' 创建成功。`,
@@ -482,10 +457,6 @@ async function init(router: Router) {
     }
   }) as RequestHandler);
 
-  /**
-   * @api {get} /history
-   * @description 获取指定文件（或整个仓库）的提交历史。
-   */
   router.get("/history", ensureAuthenticated, (async (req, res) => {
     const { repoUrl, branch, file } = req.query;
     if (!repoUrl || !branch) {
@@ -515,10 +486,6 @@ async function init(router: Router) {
    * =================================================================
    */
 
-  /**
-   * @api {get} /check_updates
-   * @description "检查更新"功能。获取远程分支最新的提交SHA，用于和本地版本进行比较。
-   */
   router.get("/check_updates", ensureAuthenticated, (async (req, res) => {
     const { repoUrl, branch } = req.query;
     if (!repoUrl || !branch) {
@@ -542,10 +509,6 @@ async function init(router: Router) {
     }
   }) as RequestHandler);
 
-  /**
-   * @api {get} /commit_diff
-   * @description 获取单个文件在某次特定提交中的变更内容(patch/diff)。
-   */
   router.get("/commit_diff", ensureAuthenticated, (async (req, res) => {
     const { repoUrl, sha, file } = req.query;
     if (!repoUrl || !sha || !file) {
@@ -572,32 +535,96 @@ async function init(router: Router) {
 
   /**
    * @api {post} /revert_version
-   * @description "回滚(Revert)"功能。将指定文件恢复到某次历史提交时的状态。
-   *              这实际上是创建一个新的提交，其内容与旧版本相同。
+   * @description "回滚(Revert)"功能。采用与“拉取”相同的无痕更新逻辑，
+   *              获取指定历史版本的`character.json`，并将其注入到当前角色卡中。
    */
   router.post("/revert_version", ensureAuthenticated, (async (req, res) => {
-    const { repoUrl, branch, targetCommitSha } = req.body;
-    if (!repoUrl || !branch || !targetCommitSha) {
+    const { repoUrl, targetCommitSha, characterAvatar } = req.body;
+
+    if (!repoUrl || !targetCommitSha || !characterAvatar) {
       return res.status(400).send({
         message:
-          "仓库地址(repoUrl), 分支(branch), 和目标提交哈希(targetCommitSha)是必需的。",
+          "仓库地址(repoUrl), 目标提交(targetCommitSha), 和角色头像(characterAvatar)是必需的。",
       });
     }
+
     try {
-      const revertedData = await revertToVersion(
+      // 1. 从GitHub拉取目标commit的character.json
+      const jsonFileData = await getFileContent(
         loggedInUser.accessToken,
-        repoUrl,
-        branch,
-        targetCommitSha
+        repoUrl as string,
+        targetCommitSha as string,
+        "character.json"
       );
+      if (!jsonFileData || !jsonFileData.content) {
+        throw new Error(`在提交 ${targetCommitSha} 中未找到 character.json。`);
+      }
+      const characterJsonContent = Buffer.from(
+        jsonFileData.content,
+        "base64"
+      ).toString("utf-8");
+
+      // 2. 从SillyTavern导出当前角色卡PNG的Buffer
+      const exportResponse = await fetch(
+        "http://127.0.0.1:8000/api/characters/export",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": req.headers["x-csrf-token"] as string,
+            Cookie: req.headers.cookie as string,
+          },
+          body: JSON.stringify({
+            format: "png",
+            avatar_url: characterAvatar as string,
+          }),
+        }
+      );
+      if (!exportResponse.ok) {
+        throw new Error(
+          `从SillyTavern导出角色卡失败: ${exportResponse.status}`
+        );
+      }
+      const cardPngBuffer = await exportResponse.buffer();
+
+      // 3. 将历史JSON注入到导出的PNG Buffer中
+      const newCardBuffer = write(cardPngBuffer, characterJsonContent);
+
+      // 4. 将合成后的新卡片导入SillyTavern
+      const formData = new FormData();
+      formData.append("avatar", newCardBuffer, characterAvatar as string);
+      formData.append("file_type", "png");
+      formData.append("preserved_name", characterAvatar as string);
+
+      const importResponse = await fetch(
+        "http://127.0.0.1:8000/api/characters/import",
+        {
+          method: "POST",
+          body: formData,
+          headers: {
+            ...formData.getHeaders(),
+            "X-CSRF-Token": req.headers["x-csrf-token"] as string,
+            Cookie: req.headers.cookie as string,
+          },
+        }
+      );
+      if (!importResponse.ok) {
+        const errorText = await importResponse.text();
+        throw new Error(
+          `SillyTavern导入失败: ${importResponse.status} - ${errorText}`
+        );
+      }
+      const result = await importResponse.json();
       res.status(200).send({
-        message: "文件回滚成功！现在将为您加载新版本。",
-        data: revertedData,
+        message: `角色卡已成功回滚到版本 ${(
+          targetCommitSha as string
+        ).substring(0, 7)} 并更新！`,
+        data: result,
       });
     } catch (error: any) {
-      console.error(`将文件回滚到 ${targetCommitSha} 失败:`, error);
+      console.error(`从版本 ${targetCommitSha} 回滚失败:`, error);
       res.status(500).send({
-        message: "文件回滚失败。",
+        message: "角色卡回滚失败。",
         details: error.message,
       });
     }
@@ -609,21 +636,33 @@ async function init(router: Router) {
    * =================================================================
    */
 
-  /**
-   * @api {post} /create_release
-   * @description 创建一个新的GitHub Release。这是一个集成的操作：
-   *              1. 在GitHub上创建一个新的Release条目。
-   *              2. 自动从指定分支获取`character.json`和`card.png`的内容。
-   *              3. 将这两个文件作为附件上传到新创建的Release中。
-   */
   router.post("/create_release", ensureAuthenticated, (async (req, res) => {
-    const { repoUrl, version, title, notes, targetBranch } = req.body;
-    if (!repoUrl || !version || !title || !notes || !targetBranch) {
+    const {
+      repoUrl,
+      version,
+      title,
+      notes,
+      targetBranch,
+      characterData,
+      characterAvatar,
+    } = req.body;
+
+    if (
+      !repoUrl ||
+      !version ||
+      !title ||
+      !notes ||
+      !targetBranch ||
+      !characterData ||
+      !characterAvatar
+    ) {
       return res.status(400).send({
-        message: "仓库地址, 版本, 标题, 说明, 和目标分支是必需的。",
+        message: "创建发行版所需的所有参数（包括角色数据和头像）都是必需的。",
       });
     }
+
     try {
+      // 1. 在GitHub上创建Release条目
       const releaseData = await createRelease(
         loggedInUser.accessToken,
         repoUrl,
@@ -632,44 +671,51 @@ async function init(router: Router) {
         notes,
         targetBranch
       );
-
       const releaseId = releaseData.id;
 
-      const jsonFileData = await getFileContent(
+      // 2. 准备character.json内容并作为附件上传
+      const jsonContent = JSON.stringify(characterData, null, 2);
+      await uploadReleaseAsset(
         loggedInUser.accessToken,
         repoUrl,
-        targetBranch,
-        "character.json"
+        releaseId,
+        "character.json",
+        Buffer.from(jsonContent).toString("base64"), // uploadReleaseAsset期望base64
+        "application/json"
       );
 
-      if (jsonFileData && jsonFileData.content) {
-        await uploadReleaseAsset(
-          loggedInUser.accessToken,
-          repoUrl,
-          releaseId,
-          "character.json",
-          jsonFileData.content,
-          "application/json"
+      // 3. 从SillyTavern导出当前最新的card.png
+      const exportResponse = await fetch(
+        "http://127.0.0.1:8000/api/characters/export",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": req.headers["x-csrf-token"] as string,
+            Cookie: req.headers.cookie as string,
+          },
+          body: JSON.stringify({
+            format: "png",
+            avatar_url: characterAvatar,
+          }),
+        }
+      );
+      if (!exportResponse.ok) {
+        throw new Error(
+          `从SillyTavern导出角色卡以附加到发行版时失败: ${exportResponse.status}`
         );
       }
+      const cardPngBuffer = await exportResponse.buffer();
 
-      const pngFileData = await getFileContent(
+      // 4. 将导出的PNG作为附件上传
+      await uploadReleaseAsset(
         loggedInUser.accessToken,
         repoUrl,
-        targetBranch,
-        "card.png"
+        releaseId,
+        "card.png",
+        cardPngBuffer.toString("base64"), // uploadReleaseAsset期望base64
+        "image/png"
       );
-
-      if (pngFileData && pngFileData.content) {
-        await uploadReleaseAsset(
-          loggedInUser.accessToken,
-          repoUrl,
-          releaseId,
-          "card.png",
-          pngFileData.content,
-          "image/png"
-        );
-      }
 
       res.status(200).send({
         message: `发行版 ${version} 创建成功并已附加资源。`,
@@ -684,10 +730,6 @@ async function init(router: Router) {
     }
   }) as RequestHandler);
 
-  /**
-   * @api {post} /pull-request
-   * @description 创建一个从用户复刻到上游仓库的拉取请求(Pull Request)。
-   */
   router.post("/pull-request", ensureAuthenticated, (async (req, res) => {
     const { upstreamRepoUrl, headBranch, baseBranch, title, body } = req.body;
     if (!upstreamRepoUrl || !headBranch || !baseBranch || !title) {

@@ -9,18 +9,25 @@
 
 通过本插件，您可以将角色卡的创作与维护，从孤立的个人工作，转变为一个可版本化、可追溯、可协同的结构化工程。
 
+## 核心架构
+
+本插件采用**数据与载体分离**的原则，为您提供稳定、高效、可协作的角色卡管理方案：
+
+- **数据 (`character.json`)**: 角色的核心定义，包括描述、性格、对话示例等所有文本信息。这部分是协作和版本控制的**主角**，将通过 Git 在云端同步。
+- **载体 (`card.png`)**: 角色图片。它在本地作为数据的“容器”，其图像本身**不会**被上传或修改。所有云端的数据更新都将以“无痕”的方式注入到您本地的图片中。
+
 ## 主要功能
 
 - **GitHub OAuth 认证**: 安全可靠的用户身份验证流程。
 - **仓库管理**: 在插件内创建或关联远程 GitHub 仓库。
-- **核心 Git 操作**: 实现对角色卡 (`character.json`) 和角色图片 (`card.png`) 的推送 (Push)、拉取 (Pull)、版本历史查看、差异比对和版本回滚。
-- **原子化提交**: 将 `character.json` 和 `card.png` 的更新合并到一次提交中，保持版本历史的清晰和原子性。
-- **分支与发布管理**: 支持分支的创建、查看，以及一键创建包含角色附件的 GitHub Release。
+- **版本化文本数据**: 只对核心的 `character.json` 文件进行推送 (Push)、拉取 (Pull)、版本历史查看、差异比对和版本回滚。
+- **无痕本地更新**:
+  - **拉取/回滚**: 从云端获取指定版本的 `character.json` 后，插件会自动将其注入您本地的 `card.png` 文件中，实现对现有角色的无缝更新，而无需手动替换图片。
+  - **推送**: 只将您本地的 `character.json` 数据推送到仓库，完全不涉及图片文件。
+- **分支与发布管理**: 支持分支的创建、查看，以及一键创建包含 `character.json` 附件的 GitHub Release。
 - **协作流程**: 支持仓库的复刻 (Fork) 和拉取请求 (Pull Request) 的创建。
 
 ## 安装教程
-
-安装过程比较复杂，大约需要十分钟。
 
 **第一步：启用 SillyTavern 服务器插件**
 
@@ -33,25 +40,15 @@
 
 **第二步：安装 Qiros 服务器后端**
 
-我们强烈推荐使用 `git clone` 的方式进行安装，这能让插件在未来自动更新。
-
-- **方法一 (推荐，需要 Git):**
+- **使用 `git clone` (推荐):**
 
   1.  打开终端或命令行。
-  2.  进入 SillyTavern 的 `plugins` 目录，例如: `cd path/to/SillyTavern/plugins`
-  3.  运行克隆命令:
-      ```bash
-      git clone https://github.com/MAX-TAB/qiros-server.git
-      ```
+  2.  进入 SillyTavern 的 `plugins` 目录: `cd path/to/SillyTavern/plugins`
+  3.  运行克隆命令: `git clone https://github.com/MAX-TAB/qiros-server.git`
 
-- **方法二 (手动安装):**
+- **手动安装:**
   1.  在 [qiros-server 的 GitHub 页面](https://github.com/MAX-TAB/qiros-server) 点击 `Code` -> `Download ZIP`。
   2.  将解压后的文件夹移动到 `SillyTavern\plugins` 目录下。
-
-安装完成后，请继续执行后续的部署脚本步骤：
-
-- **Windows 用户**: 运行 `SillyTavern\plugins\qiros-server\一键部署脚本.bat`。
-- **手机或其他系统用户**: 运行 `SillyTavern\plugins\qiros-server\一键部署脚本.sh`。
 
 **第三步：获取 GitHub OAuth 密钥**
 

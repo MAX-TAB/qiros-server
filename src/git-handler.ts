@@ -42,7 +42,7 @@ function parseRepoUrl(repoUrl: string): { owner: string; repo: string } {
  * @returns {Promise<object>} - 返回由GitHub API创建的仓库对象的详细数据。
  */
 export async function createRepo(token: string, repoName: string) {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: token, request: { timeout: 60000 } });
   const { data: repoData } = await octokit.repos.createForAuthenticatedUser({
     name: repoName,
     private: true,
@@ -63,7 +63,7 @@ export async function createRepo(token: string, repoName: string) {
  * @returns {Promise<object>} - 返回一个包含分支数组的对象，格式为 { branches: [...] }。
  */
 export async function getBranches(token: string, repoUrl: string) {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: token, request: { timeout: 60000 } });
   const { owner, repo } = parseRepoUrl(repoUrl);
   const { data: remoteBranches } = await octokit.repos.listBranches({
     owner,
@@ -94,11 +94,13 @@ export async function createBranch(
   token: string,
   repoUrl: string,
   newBranchName: string,
-  baseBranchName: string | null
+  baseBranchName: string | null,
+  readmeContent?: string
 ) {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: token, request: { timeout: 60000 } });
   const { owner, repo } = parseRepoUrl(repoUrl);
 
+  // 如果提供了基础分支，直接使用
   if (baseBranchName) {
     const { data: baseBranchData } = await octokit.repos.getBranch({
       owner,
@@ -114,18 +116,49 @@ export async function createBranch(
       sha: fromCommitSha,
     });
     return data;
-  } else {
-    const { data } = await octokit.repos.createOrUpdateFileContents({
+  }
+
+  // 如果没有提供基础分支，判断仓库是否为空
+  try {
+    // 尝试获取仓库的默认分支。如果仓库为空，这里会成功，但 default_branch 可能指向一个尚不存在的 ref
+    const { data: repoData } = await octokit.repos.get({ owner, repo });
+    const defaultBranch = repoData.default_branch;
+
+    // 尝试获取默认分支的 commit SHA。如果分支不存在（即仓库为空），这里会抛出 404 错误
+    const { data: baseBranchData } = await octokit.repos.getBranch({
       owner,
       repo,
-      path: "README.md",
-      message: "Initial commit",
-      content: Buffer.from(
-        "# New Qiros-Managed Repository\n\nThis repository was created by the Qiros extension for SillyTavern."
-      ).toString("base64"),
-      branch: newBranchName,
+      branch: defaultBranch,
     });
-    return { success: true, branch: newBranchName, object: data.commit };
+    const fromCommitSha = baseBranchData.commit.sha;
+
+    // 如果成功获取，说明仓库不为空，基于默认分支创建新分支
+    const { data } = await octokit.git.createRef({
+      owner,
+      repo,
+      ref: `refs/heads/${newBranchName}`,
+      sha: fromCommitSha,
+    });
+    return data;
+  } catch (error: any) {
+    // 如果捕获到错误（特别是 404），说明仓库是空的，需要初始化
+    if (error.status === 404) {
+      const finalReadmeContent =
+        readmeContent ||
+        "# Qiros角色卡仓库\n\n此仓库由SillyTavern的Qiros扩展创建和管理。";
+
+      const { data } = await octokit.repos.createOrUpdateFileContents({
+        owner,
+        repo,
+        path: "README.md",
+        message: "Initial commit",
+        content: Buffer.from(finalReadmeContent).toString("base64"),
+        branch: newBranchName,
+      });
+      return { success: true, branch: newBranchName, object: data.commit };
+    }
+    // 其他错误则向上抛出
+    throw error;
   }
 }
 
@@ -147,7 +180,7 @@ export async function getBranchHeadSha(
   repoUrl: string,
   branch: string
 ): Promise<string> {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: token, request: { timeout: 60000 } });
   const { owner, repo } = parseRepoUrl(repoUrl);
 
   const { data: branchData } = await octokit.repos.getBranch({
@@ -178,7 +211,7 @@ export async function getCommitDiff(
   commitSha: string,
   filePath: string
 ): Promise<string | null> {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: token, request: { timeout: 60000 } });
   const { owner, repo } = parseRepoUrl(repoUrl);
 
   const { data: commitData } = await octokit.repos.getCommit({
@@ -204,7 +237,7 @@ export async function getCommitDiff(
  * @returns {Promise<object[]>} - 返回一个包含所有发行版对象的数组。
  */
 export async function getReleases(token: string, repoUrl: string) {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: token, request: { timeout: 60000 } });
   const { owner, repo } = parseRepoUrl(repoUrl);
   const { data: releases } = await octokit.repos.listReleases({
     owner,
@@ -238,7 +271,7 @@ export async function syncFile(
   newContent: string | Buffer,
   commitMessage: string
 ) {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: token, request: { timeout: 60000 } });
   const { owner, repo } = parseRepoUrl(repoUrl);
 
   let fileSha: string | undefined;
@@ -296,7 +329,7 @@ export async function commitMultipleFiles(
   files: Array<{ path: string; content: string | Buffer }>,
   commitMessage: string
 ) {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: token, request: { timeout: 60000 } });
   const { owner, repo } = parseRepoUrl(repoUrl);
 
   // 1. 获取当前分支的最新 commit 和其 tree
@@ -383,7 +416,7 @@ export async function getHistory(
   branch: string,
   fileName?: string
 ) {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: token, request: { timeout: 60000 } });
   const { owner, repo } = parseRepoUrl(repoUrl);
 
   const { data: commits } = await octokit.repos.listCommits({
@@ -426,25 +459,93 @@ export async function getFileContent(
   const octokit = new Octokit({ auth: token });
   const { owner, repo } = parseRepoUrl(repoUrl);
   try {
-    const { data } = await octokit.repos.getContent({
+    // --- 日志点 1: 函数入口 ---
+    console.log(`[Qiros-Debug-Handler] ==> getFileContent: 开始获取文件。`);
+    console.log(`[Qiros-Debug-Handler]     - Owner: ${owner}, Repo: ${repo}`);
+    console.log(`[Qiros-Debug-Handler]     - Ref/Branch/SHA: ${hash}`);
+    console.log(`[Qiros-Debug-Handler]     - 文件名: ${fileName}`);
+
+    const { data, headers } = await octokit.repos.getContent({
       owner,
       repo,
       path: fileName,
       ref: hash,
+      // --- 关键修改：添加此headers来尝试绕过缓存 ---
+      headers: {
+        "If-None-Match": "",
+      },
     });
 
+    // --- 日志点 2: API响应头 ---
+    console.log(`[Qiros-Debug-Handler] <== GitHub API 响应头 (部分):`, {
+      status: headers.status,
+      "x-ratelimit-remaining": headers["x-ratelimit-remaining"],
+      "x-github-request-id": headers["x-github-request-id"],
+      etag: headers.etag,
+    });
+
+    // 类型守卫，确保 data 是单个文件对象而不是数组
+    if (Array.isArray(data)) {
+      // --- 日志点 3: 路径返回的是目录 ---
+      console.error(
+        `[Qiros-Debug-Handler] !!! 错误：路径 '${fileName}' 返回了一个目录，而不是预期的单个文件。`
+      );
+      return null;
+    }
+
+    // --- 日志点 4: 检查返回的数据结构 ---
+    console.log(
+      `[Qiros-Debug-Handler] GitHub返回的数据类型: ${data.type}, 大小: ${data.size} bytes`
+    );
+
     if ("content" in data && data.content) {
+      // --- 日志点 5A: 文件内容直接包含在响应中 ---
+      console.log(
+        `[Qiros-Debug-Handler]     - 找到了 'content' 字段，文件内容被直接返回。`
+      );
       return {
         content: data.content,
         sha: data.sha,
       };
     }
+
+    if ("download_url" in data && data.download_url) {
+      // --- 日志点 5B: 文件内容需要通过 download_url 获取 (大文件) ---
+      console.log(
+        `[Qiros-Debug-Handler]     - 文件过大，从 download_url 下载: ${data.download_url}`
+      );
+      const response = await fetch(data.download_url);
+      if (!response.ok) {
+        throw new Error(`无法从 download_url 下载文件: ${response.statusText}`);
+      }
+      const buffer = await response.arrayBuffer();
+      // 将下载的原始数据转换为 Base64，以匹配其他逻辑的期望
+      const content = Buffer.from(buffer).toString("base64");
+      console.log(`[Qiros-Debug-Handler]     - 从 download_url 下载成功。`);
+      return {
+        content,
+        sha: data.sha,
+      };
+    }
+
+    // --- 日志点 6: 未知的文件结构 ---
+    console.warn(
+      `[Qiros-Debug-Handler] !!! 警告：收到了文件元数据，但其中既不包含 'content' 也不包含 'download_url'。`
+    );
     return null;
   } catch (error: any) {
+    // --- 日志点 7: 捕获到错误 ---
+    console.error(
+      `[Qiros-Debug-Handler] !!! getFileContent 捕获到严重错误:`,
+      error
+    );
     if (error.status === 404) {
-      console.warn(`文件未找到: ${fileName} at ref ${hash}.`);
+      console.error(
+        `[Qiros-Debug-Handler]     - 错误状态为 404 (Not Found)。确认文件 '${fileName}' 是否存在于分支 '${hash}' 中。`
+      );
       return null;
     }
+    // 重新抛出其他所有错误
     throw error;
   }
 }
@@ -743,7 +844,7 @@ export async function createPullRequest(
   title: string,
   body: string
 ) {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: token, request: { timeout: 60000 } });
   const { owner, repo } = parseRepoUrl(upstreamRepoUrl);
 
   const { data: prData } = await octokit.pulls.create({
